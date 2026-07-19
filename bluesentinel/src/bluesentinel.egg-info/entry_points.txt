@@ -1,0 +1,2 @@
+[console_scripts]
+bluesentinel = bluesentinel.__main__:main

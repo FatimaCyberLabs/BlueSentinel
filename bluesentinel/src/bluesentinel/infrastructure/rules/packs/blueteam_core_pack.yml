@@ -1,0 +1,174 @@
+title: Office Application Spawning Windows Shell or Script Interpreter
+id: 65531a81-a694-4b76-9d90-2f4e0a1a0001
+status: stable
+description: >
+  Detecta una aplicación de Microsoft Office (Word, Excel, PowerPoint, Outlook)
+  lanzando un intérprete de comandos o de scripting como proceso hijo directo —
+  patrón clásico de ejecución de macro maliciosa en documentos de phishing.
+level: high
+logsource:
+  product: windows
+  category: process_creation
+tags:
+  - attack.execution
+  - attack.t1204.002
+  - attack.t1059.001
+detection:
+  selection_parent:
+    ParentImage|endswith:
+      - '\WINWORD.EXE'
+      - '\EXCEL.EXE'
+      - '\POWERPNT.EXE'
+      - '\OUTLOOK.EXE'
+  selection_child:
+    Image|endswith:
+      - '\powershell.exe'
+      - '\pwsh.exe'
+      - '\cmd.exe'
+      - '\wscript.exe'
+      - '\cscript.exe'
+      - '\mshta.exe'
+  condition: selection_parent and selection_child
+falsepositives:
+  - Add-ins legítimos que invocan scripts firmados (raro; validar firma del binario)
+---
+title: Suspicious Encoded PowerShell Command Line
+id: 65531a81-a694-4b76-9d90-2f4e0a1a0002
+status: stable
+description: Detecta PowerShell invocado con un comando codificado en Base64, común en droppers y stagers.
+level: high
+logsource:
+  product: windows
+  category: process_creation
+tags:
+  - attack.execution
+  - attack.t1059.001
+  - attack.defense_evasion
+  - attack.t1027
+detection:
+  selection_img:
+    Image|endswith:
+      - '\powershell.exe'
+      - '\pwsh.exe'
+  selection_cli:
+    CommandLine|contains:
+      - '-enc '
+      - '-EncodedCommand'
+      - ' -e '
+  filter_legit:
+    ParentImage|endswith: '\ProductivitySuiteUpdater.exe'
+  condition: selection_img and selection_cli and not filter_legit
+falsepositives:
+  - Scripts de administración legítimos que usan comandos codificados
+---
+title: Persistence via Registry Run Key
+id: 9a8b7c6d-2222-4b76-9d90-2f4e0a1a0003
+status: test
+description: Detecta la creación o modificación de una entrada en las claves Run/RunOnce del registro, mecanismo de persistencia estándar (T1547.001).
+level: medium
+logsource:
+  product: windows
+  category: registry_event
+tags:
+  - attack.persistence
+  - attack.t1547.001
+detection:
+  selection:
+    TargetObject|contains:
+      - '\CurrentVersion\Run\'
+      - '\CurrentVersion\RunOnce\'
+  condition: selection
+falsepositives:
+  - Instaladores de software legítimo que configuran ejecución al inicio
+---
+title: AMSI Provider Tampering via Registry
+id: 3c2d1e0f-3333-4b76-9d90-2f4e0a1a0004
+status: experimental
+description: Detecta la eliminación o modificación de un proveedor AMSI registrado, técnica de evasión de defensa para desactivar el escaneo de scripts.
+level: critical
+logsource:
+  product: windows
+  category: registry_event
+tags:
+  - attack.defense_evasion
+  - attack.t1562.001
+detection:
+  selection:
+    TargetObject|contains: '\SOFTWARE\Microsoft\AMSI\Providers\'
+  condition: selection
+falsepositives:
+  - Desinstalación legítima de un producto de seguridad de terceros que registró un proveedor AMSI
+---
+title: LSASS Memory Dump via Process Access (comsvcs.dll / rundll32)
+id: 0f4c1b3a-4444-4b76-9d90-2f4e0a1a0005
+status: stable
+description: >
+  Detecta un acceso a lsass.exe con máscara de permisos compatible con volcado
+  de memoria completo, técnica muy usada mediante rundll32.exe + comsvcs.dll
+  MiniDump para evitar caer herramientas de dumping conocidas por firma.
+level: critical
+logsource:
+  product: windows
+  category: process_access
+tags:
+  - attack.credential_access
+  - attack.t1003.001
+detection:
+  selection:
+    TargetImage|endswith: '\lsass.exe'
+    GrantedAccess:
+      - '0x1010'
+      - '0x1410'
+      - '0x1438'
+      - '0x143a'
+  condition: selection
+falsepositives:
+  - Productos EDR/AV legítimos que inspeccionan LSASS (excluir por SourceImage conocido)
+---
+title: WMI Process Creation on Remote Host
+id: 8e7f6a5b-5555-4b76-9d90-2f4e0a1a0006
+status: test
+description: Detecta ejecución remota de procesos vía WMI (wmic /node), técnica común de movimiento lateral sin necesidad de PsExec.
+level: medium
+logsource:
+  product: windows
+  category: process_creation
+tags:
+  - attack.lateral_movement
+  - attack.t1047
+detection:
+  selection:
+    Image|endswith: '\wmic.exe'
+    CommandLine|contains:
+      - '/node:'
+      - 'process call create'
+  condition: selection
+falsepositives:
+  - Scripts de administración legítimos de infraestructura basados en WMI
+---
+title: Outbound Connection to Known C2 Beacon Pattern
+id: 1a2b3c4d-6666-4b76-9d90-2f4e0a1a0007
+status: experimental
+description: >
+  Regla de ejemplo que correlaciona conexiones salientes desde un intérprete
+  de scripting hacia un host que no pertenece a los rangos corporativos
+  conocidos — en un entorno real, este `filter` se alimenta de un feed de
+  IP/dominios internos, no de una lista estática.
+level: medium
+logsource:
+  product: windows
+  category: network_connection
+tags:
+  - attack.command_and_control
+  - attack.t1071.001
+detection:
+  selection:
+    Image|endswith:
+      - '\powershell.exe'
+      - '\pwsh.exe'
+    DestinationPort:
+      - '443'
+      - '80'
+  condition: selection
+falsepositives:
+  - Scripts de automatización legítimos que consumen APIs externas por HTTPS
